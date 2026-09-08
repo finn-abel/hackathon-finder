@@ -1,7 +1,7 @@
 """Step 7: run the deterministic layer over everything collected.
 
     uv run screen.py                  # apply code's verdict, current config
-    uv run screen.py --include-past   # ignore the timeframe filter
+    uv run screen.py --include-past   # keep events that already happened
     uv run screen.py --show excluded  # inspect a bucket
     uv run screen.py --today 2026-02-01
 
