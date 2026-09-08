@@ -136,3 +136,51 @@ Because MLH publishes structured data, code settles almost all of it with no
 model call at all. `core/merge.py` folds events found in both sources into one
 record, preferring the one carrying more structured fields — which upgrades a
 Devpost venue string to MLH's clean city when both list the same event.
+
+## The deterministic layer
+
+`core/screening.py` runs code's verdict over everything collected. No model is
+called; a test asserts the module never even imports one.
+
+```bash
+uv run screen.py                      # code's verdict, current config
+uv run screen.py --include-past       # keep events that already happened
+uv run screen.py --show excluded      # inspect any bucket, with reasons
+uv run screen.py --today 2026-02-01   # re-bucket against a different date
+```
+
+Each candidate lands in one of four buckets:
+
+| bucket | meaning |
+|---|---|
+| `primary` | in the area and physically there — the shortlist |
+| `online-gta` | organised in the area but run online, kept and labelled apart |
+| `unresolved` | code cannot place it; the listing still needs reading |
+| `excluded` | code is confident it does not belong, with the reason attached |
+
+Every decision carries its reason, and assumptions are flagged rather than
+hidden — a deadline inferred from an event's last day says so.
+
+## Judging
+
+`agent/judge.py` is the one place a model makes a judgement call. It scores
+each hackathon 0-5 against your `criteria` sentence and explains itself citing
+specific facts. **It does not rank** — ordering a list is arithmetic, so
+`agent.judge.rank` sorts by score, then by nearer deadline, then by name.
+
+```bash
+uv run judge.py                          # rank the shortlist
+uv run judge.py --include-past --top 10
+uv run judge.py --criteria "hardware, open to professionals"
+uv run judge.py --buckets primary online-gta unresolved
+```
+
+No browser is opened — judging is text in, score out, so it runs in seconds.
+
+The prompt forbids the model from re-deciding location or whether a deadline
+has passed; `core.gta` and `core.dates` already settled those, and tests assert
+those clauses stay in the prompt.
+
+Judgements are cached against a fingerprint of the criteria sentence, so
+re-running is free but **editing `criteria` re-judges everything** — and work
+done under other criteria is kept, not overwritten.

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Iterable
 from pathlib import Path
 
 from core.config import PROJECT_ROOT
-from core.models import Candidate, Reading
+from core.models import Candidate, Judgement, Reading
 
 CANDIDATES_PATH = PROJECT_ROOT / "candidates.json"
 READINGS_PATH = PROJECT_ROOT / "readings.json"
@@ -59,3 +60,45 @@ def load_readings(path: Path = READINGS_PATH) -> dict[str, Reading]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     readings = (Reading.model_validate(row) for row in payload.get("readings", ()))
     return {r.candidate.key: r for r in readings}
+
+
+JUDGEMENTS_PATH = PROJECT_ROOT / "judgements.json"
+
+
+def _composite_key(judgement: Judgement) -> str:
+    """A judgement is identified by BOTH the candidate and the criteria.
+
+    Keying on the candidate alone loses work: judge under one criteria
+    sentence, switch to another, and the first set is silently overwritten.
+    """
+    return f"{judgement.criteria_hash}:{judgement.key}"
+
+
+def save_judgements(judgements: Iterable[Judgement], path: Path = JUDGEMENTS_PATH) -> Path:
+    """Save every judgement, keeping one per (criteria, candidate) pair."""
+    unique = {_composite_key(j): j for j in judgements}
+    return _write_json(path, {
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "count": len(unique),
+        "judgements": [j.model_dump() for j in unique.values()],
+    })
+
+
+def load_all_judgements(path: Path = JUDGEMENTS_PATH) -> tuple[Judgement, ...]:
+    """Every judgement on disk, across all criteria."""
+    if not path.exists():
+        return ()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(Judgement.model_validate(row) for row in payload.get("judgements", ()))
+
+
+def load_judgements(
+    criteria_hash: str, path: Path = JUDGEMENTS_PATH
+) -> dict[str, Judgement]:
+    """Judgements made under one criteria sentence, keyed by candidate URL.
+
+    Judgements for any other criteria are stale by definition and excluded.
+    """
+    return {
+        j.key: j for j in load_all_judgements(path) if j.criteria_hash == criteria_hash
+    }

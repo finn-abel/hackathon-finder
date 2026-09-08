@@ -28,6 +28,7 @@ class Filters(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     timeframe_months: int = Field(default=3, ge=1, le=24)
+    include_past: bool = False  # keep events that have already happened
     format: FormatFilter = "any"
     themes: tuple[str, ...] = ()
 
@@ -52,6 +53,15 @@ class Read(BaseModel):
     timeout_s: float = Field(default=240.0, ge=30.0, le=900.0)
 
 
+class Judge(BaseModel):
+    """How the AI scores fit against your criteria."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str = "gpt-4.1-mini"
+    concurrency: int = Field(default=5, ge=1, le=20)
+
+
 class Config(BaseModel):
     """One immutable run's worth of parameters."""
 
@@ -63,6 +73,7 @@ class Config(BaseModel):
     filters: Filters = Filters()
     collect: Collect = Collect()
     read: Read = Read()
+    judge: Judge = Judge()
 
     @model_validator(mode="after")
     def _general_mode_needs_a_location(self) -> "Config":

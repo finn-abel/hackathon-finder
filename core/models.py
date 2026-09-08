@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit, urlunsplit
 
+import hashlib
 from datetime import datetime
 from typing import Literal
 
@@ -150,3 +151,60 @@ class Reading(BaseModel):
         if self.facts and self.facts.dates_text:
             return self.facts.dates_text
         return self.candidate.dates_raw
+
+
+class FitVerdict(BaseModel):
+    """The AI's judgement of one hackathon against your criteria.
+
+    A score, not a rank: ordering a list is arithmetic, and code does it.
+    The model's job is the un-scriptable part — deciding whether "runs at a
+    community centre, open to all ages, no experience needed" matches
+    "beginner-friendly, open to non-students".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    score: int = Field(
+        ge=0, le=5,
+        description="0 = clearly wrong, 1-2 = weak, 3 = partial, 4 = good, 5 = ideal.",
+    )
+    reason: str = Field(
+        description="One sentence citing SPECIFIC facts from the listing, e.g. "
+        "'in-person in Toronto, tagged Beginner Friendly, but students-only'."
+    )
+    supports: list[str] = Field(description="Facts that match the criteria.")
+    conflicts: list[str] = Field(description="Facts that go against the criteria.")
+    missing: list[str] = Field(
+        description="What the listing does not say that would change the score, "
+        "e.g. 'eligibility'. Empty if nothing important is missing."
+    )
+
+
+class Judgement(BaseModel):
+    """A FitVerdict tied to the exact criteria it was made against.
+
+    Storing the criteria fingerprint is what makes the cache safe: edit the
+    criteria sentence and every stale judgement is ignored automatically.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str                      # the candidate's canonical URL
+    criteria_hash: str
+    verdict: FitVerdict | None = None
+    error: str | None = None
+    judged_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+    @property
+    def ok(self) -> bool:
+        return self.verdict is not None
+
+    @property
+    def score(self) -> int:
+        return self.verdict.score if self.verdict else -1
+
+
+def criteria_fingerprint(criteria: str) -> str:
+    """Stable id for a criteria sentence, ignoring case and spacing."""
+    normalized = " ".join(criteria.casefold().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]

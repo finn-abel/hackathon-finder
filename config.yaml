@@ -15,6 +15,7 @@ criteria: "beginner-friendly, in-person, open to non-students, AI or web themed"
 # Deterministic filters — applied by code, never by the LLM.
 filters:
   timeframe_months: 3   # only events starting within the next N months
+  include_past: false   # keep events that have already happened
   format: any           # in-person | online | hybrid | any
   themes: []            # e.g. ["ai", "web"] — empty means no theme filter
 
@@ -29,3 +30,8 @@ read:
   model: gpt-4.1-mini
   max_steps: 15
   timeout_s: 240      # give up on one listing after this long and move on
+
+# How the AI scores fit. It never decides location or deadlines.
+judge:
+  model: gpt-4.1-mini
+  concurrency: 5
