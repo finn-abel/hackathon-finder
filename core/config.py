@@ -41,6 +41,7 @@ class Collect(BaseModel):
     sources: tuple[str, ...] = ("devpost", "mlh")
     search_terms: tuple[str, ...] = ()  # empty means "derive from the mode"
     max_scrolls: int = Field(default=3, ge=0, le=20)
+    seasons: tuple[str, ...] = ()  # MLH seasons; empty = current + previous
 
 
 class Read(BaseModel):
@@ -69,6 +70,7 @@ class Config(BaseModel):
 
     mode: Mode = "gta"
     location: str | None = None
+    nearby: tuple[str, ...] = ()  # extra place names counted as inside the area
     criteria: str = Field(min_length=1)
     filters: Filters = Filters()
     collect: Collect = Collect()

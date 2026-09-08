@@ -13,7 +13,9 @@ from datetime import date
 from typing import Literal, Sequence
 
 from core.config import Config
+from core.duplicates import is_suspect_title, near_duplicates
 from core.dates import Deadline, parse_date_range, parse_deadline, parse_iso_date
+from core.flags import Flag, flag, needs_attention
 from core.location import AreaMatcher, LocationVerdict, classify
 from core.models import Candidate, Reading
 
@@ -38,7 +40,12 @@ class Screened:
     ends_on: date | None
     bucket: Bucket
     reasons: tuple[str, ...] = ()
-    flags: tuple[str, ...] = field(default=())
+    flags: tuple[Flag, ...] = field(default=())
+
+    @property
+    def needs_attention(self) -> bool:
+        """True when something here should be looked at by a person."""
+        return needs_attention(self.flags)
 
     @property
     def title(self) -> str:
@@ -97,10 +104,16 @@ def _event_format(candidate: Candidate, reading: Reading | None, location: Locat
     return location.event_format
 
 
-def _bucket_for(location: LocationVerdict, event_format: str) -> tuple[Bucket, str]:
+def _bucket_for(
+    location: LocationVerdict, event_format: str, structured_location: bool = False
+) -> tuple[Bucket, str]:
     if location.status == "elsewhere":
         return "excluded", location.reason
     if location.status == "unclear":
+        if structured_location:
+            # The source gave a full city/region/country and none of it is the
+            # target area. Reading the page cannot change that.
+            return "excluded", f"structured address is not in {location.area}"
         return "unresolved", location.reason
     if location.status == "online-only":
         return "excluded", "online with no link to the area"
@@ -109,32 +122,101 @@ def _bucket_for(location: LocationVerdict, event_format: str) -> tuple[Bucket, s
     return "primary", location.reason
 
 
+def place(
+    candidate: Candidate,
+    matcher: AreaMatcher,
+    reading: Reading | None = None,
+) -> tuple[LocationVerdict, Bucket, str]:
+    """Decide where a candidate sits on location alone, ignoring dates.
+
+    Shared by the collector's summary and the full screening pass so the two
+    can never report different numbers for the same data.
+    """
+    location = classify(_best_location(candidate, reading), matcher)
+    event_format = _event_format(candidate, reading, location)
+    bucket, reason = _bucket_for(
+        location, event_format,
+        structured_location=candidate.location_structured and reading is None,
+    )
+    return location, bucket, reason
+
+
+def _flags_for(
+    candidate: Candidate,
+    reading: Reading | None,
+    location: LocationVerdict,
+    event_format: str,
+    starts_on: date | None,
+    ends_on: date | None,
+    deadline: Deadline,
+    duplicates: dict[str, tuple[str, ...]] | None,
+) -> tuple[Flag, ...]:
+    """Everything worth saying about this listing that is not a verdict."""
+    found: list[Flag] = []
+
+    if reading is not None and not reading.ok:
+        found.append(flag("read_failed", f"read failed: {reading.error}"))
+    elif reading is None and location.needs_a_reader:
+        found.append(flag("not_read"))
+
+    facts = reading.facts if reading and reading.facts else None
+    if facts is not None and not facts.eligibility_text:
+        found.append(flag("missing_eligibility"))
+
+    if starts_on is None:
+        found.append(flag("no_parseable_date",
+                          f"could not parse {candidate.dates_raw!r}" if candidate.dates_raw
+                          else "the listing gives no dates"))
+    if deadline.date is None:
+        found.append(flag("no_deadline"))
+    elif not deadline.raw:
+        found.append(flag("assumed_deadline"))
+
+    if ends_on is not None and deadline.date is not None and deadline.date > ends_on:
+        found.append(flag("deadline_after_event",
+                          f"deadline {deadline.date} is after the event ends {ends_on}"))
+
+    # "Tagged for a city but actually online" — the case the plan calls out.
+    if location.in_area and event_format == "online":
+        found.append(flag("online_but_placed",
+                          f"names {location.places[0].name if location.places else location.area}"
+                          f" but runs online"))
+
+    if (facts is not None and candidate.format_raw
+            and facts.event_format != "unstated"
+            and facts.event_format != candidate.format_raw):
+        found.append(flag("format_conflict",
+                          f"source says {candidate.format_raw}, page says {facts.event_format}"))
+
+    if is_suspect_title(candidate.title):
+        found.append(flag("suspect_title", f"title reads {candidate.title!r}"))
+
+    others = (duplicates or {}).get(candidate.key)
+    if others:
+        found.append(flag("possible_duplicate", "also seen as " + "; ".join(others[:3])))
+
+    return tuple(found)
+
+
 def screen(
     candidate: Candidate,
     config: Config,
     matcher: AreaMatcher,
     reading: Reading | None = None,
     today: date | None = None,
+    duplicates: dict[str, tuple[str, ...]] | None = None,
 ) -> Screened:
     """Run every deterministic check over one candidate."""
     today = today or date.today()
 
-    location = classify(_best_location(candidate, reading), matcher)
+    location, bucket, reason = place(candidate, matcher, reading)
     starts_on, ends_on = _event_dates(candidate, today)
     deadline = _best_deadline(candidate, reading, ends_on, today)
     event_format = _event_format(candidate, reading, location)
-
-    bucket, reason = _bucket_for(location, event_format)
-    reasons, flags = [reason], []
-
-    if reading is None and location.needs_a_reader:
-        flags.append("not read yet")
-    if starts_on is None:
-        flags.append("no parseable date")
-    if deadline.date is None:
-        flags.append("no deadline")
-    elif not deadline.raw:
-        flags.append("deadline assumed from the event's last day")
+    reasons = [reason]
+    flags = _flags_for(
+        candidate, reading, location, event_format, starts_on, ends_on, deadline, duplicates
+    )
 
     # Config filters. These only ever demote to "excluded" — they never rescue.
     if bucket in ("primary", "online-gta"):
@@ -183,8 +265,9 @@ def screen_all(
 ) -> tuple[Screened, ...]:
     """Screen every candidate, attaching a reading where one exists."""
     readings = readings or {}
+    duplicates = near_duplicates(candidates)
     return tuple(
-        screen(candidate, config, matcher, readings.get(candidate.key), today)
+        screen(candidate, config, matcher, readings.get(candidate.key), today, duplicates)
         for candidate in candidates
     )
 

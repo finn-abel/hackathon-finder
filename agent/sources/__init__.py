@@ -28,6 +28,7 @@ class CollectRequest:
     location: str | None = None
     terms: tuple[str, ...] = ()
     max_scrolls: int = 3
+    seasons: tuple[str, ...] = ()  # MLH seasons; empty means "work it out from today"
 
 
 class Source(Protocol):

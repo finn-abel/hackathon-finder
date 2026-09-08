@@ -26,7 +26,7 @@ from core.models import Judgement, criteria_fingerprint
 from core.results import build_results
 from core.screening import Bucket, Screened, screen_all
 from core.store import (
-    load_all_judgements, load_candidates, load_judgements, load_readings,
+    load_all_judgements, candidates_path, load_candidates, load_judgements, load_readings,
     save_judgements, save_results,
 )
 
@@ -79,10 +79,10 @@ async def main() -> None:
             "filters": config.filters.model_copy(
                 update={"include_past": True, "timeframe_months": 24})
         })
-    matcher = matcher_for(config.mode, config.location)
+    matcher = matcher_for(config.mode, config.location, config.nearby)
     today = date.fromisoformat(args.today) if args.today else date.today()
 
-    candidates = load_candidates()
+    candidates = load_candidates(candidates_path(config.mode, config.location))
     readings = load_readings()
     screened = screen_all(candidates, config, matcher, readings, today)
     wanted = [s for s in screened if s.bucket in args.buckets]

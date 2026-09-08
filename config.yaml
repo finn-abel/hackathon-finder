@@ -8,13 +8,17 @@ mode: gta
 # Required in "general" mode, ignored in "gta" mode.
 location: null
 
+# Extra place names to count as inside the target area ("general" mode only),
+# e.g. ["Kitchener", "Cambridge"] alongside location "Waterloo, ON".
+nearby: []
+
 # The one sentence the AI judges each listing against. This is the only
 # fuzzy input in the whole config.
 criteria: "beginner-friendly, in-person, open to non-students, AI or web themed"
 
 # Deterministic filters — applied by code, never by the LLM.
 filters:
-  timeframe_months: 3   # only events starting within the next N months
+  timeframe_months: 12  # only events starting within the next N months
   include_past: false   # keep events that have already happened
   format: any           # in-person | online | hybrid | any
   themes: []            # e.g. ["ai", "web"] — empty means no theme filter

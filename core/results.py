@@ -20,10 +20,11 @@ from typing import Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.config import Config
+from core.flags import CATALOGUE, Flag
 from core.models import Judgement, Reading
 from core.screening import Screened
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 LEGEND: dict[str, dict[str, str]] = {
     "provenance": {
@@ -49,6 +50,12 @@ LEGEND: dict[str, dict[str, str]] = {
         "upcoming": "Further out than 7 days.",
         "unknown": "No deadline could be parsed. Never guessed.",
     },
+    "flag_severity": {
+        "info": "Worth knowing. No action needed.",
+        "warn": "The data is thinner than it looks.",
+        "attention": "A person should look at this listing.",
+    },
+    "flag": {code: description for code, (_, description) in CATALOGUE.items()},
     "fit_score": {
         "5": "Ideal — matches every part of the criteria.",
         "4": "Good — matches the important parts.",
@@ -88,7 +95,8 @@ class DerivedFacts(BaseModel):
     days_away: int | None = None
     bucket: str = "unresolved"
     reasons: tuple[str, ...] = ()
-    flags: tuple[str, ...] = ()
+    flags: tuple[Flag, ...] = ()
+    needs_attention: bool = False
 
 
 class Fit(BaseModel):
@@ -130,6 +138,10 @@ class RunContext(BaseModel):
     sources: tuple[str, ...]
     filters: dict[str, object]
     counts: dict[str, int]
+    flag_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="How many listings carry each flag, across the whole run.",
+    )
     excluded_reasons: dict[str, int] = Field(
         default_factory=dict,
         description="Why code ruled things out. Excluded rows are summarised "
@@ -176,6 +188,7 @@ def _derived_facts(item: Screened) -> DerivedFacts:
         bucket=item.bucket,
         reasons=item.reasons,
         flags=item.flags,
+        needs_attention=item.needs_attention,
     )
 
 
@@ -226,6 +239,12 @@ def build_results(
     counts: dict[str, int] = {"collected": len(all_screened), "in_file": len(rows)}
     for item in all_screened:
         counts[item.bucket] = counts.get(item.bucket, 0) + 1
+    counts["needs_attention"] = sum(1 for item in all_screened if item.needs_attention)
+
+    flag_counts: dict[str, int] = {}
+    for item in all_screened:
+        for one in item.flags:
+            flag_counts[one.code] = flag_counts.get(one.code, 0) + 1
 
     excluded_reasons: dict[str, int] = {}
     for item in all_screened:
@@ -246,6 +265,7 @@ def build_results(
             filters=config.filters.model_dump(),
             counts=counts,
             excluded_reasons=excluded_reasons,
+            flag_counts=dict(sorted(flag_counts.items(), key=lambda kv: -kv[1])),
         ),
         results=tuple(rows),
     )

@@ -19,7 +19,7 @@ from agent.session import steel_browser
 from core.config import build_parser, config_from_args
 from core.location import classify, matcher_for
 from core.models import Candidate
-from core.store import load_candidates
+from core.store import candidates_path, load_candidates
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,16 +89,16 @@ def print_facts(url: str, facts: ListingFacts | None) -> None:
 async def main() -> None:
     args = parse_args()
     config = config_from_args(args)
-    matcher = matcher_for(config.mode, config.location)
+    matcher = matcher_for(config.mode, config.location, config.nearby)
 
     if args.list or (not args.url and args.index is None):
-        show_cached(load_candidates(), matcher)
+        show_cached(load_candidates(candidates_path(config.mode, config.location)), matcher)
         return
 
     if args.url:
         url = args.url
     else:
-        candidates = load_candidates()
+        candidates = load_candidates(candidates_path(config.mode, config.location))
         if not 0 <= args.index < len(candidates):
             raise SystemExit(f"--index must be 0..{len(candidates) - 1}")
         chosen = candidates[args.index]

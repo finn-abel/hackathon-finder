@@ -18,7 +18,7 @@ from datetime import date
 from core.config import build_parser, config_from_args
 from core.location import matcher_for
 from core.screening import Bucket, Screened, by_bucket, screen_all
-from core.store import load_candidates, load_readings
+from core.store import candidates_path, load_candidates, load_readings
 
 BUCKET_ORDER: tuple[Bucket, ...] = ("primary", "online-gta", "unresolved", "excluded")
 BUCKET_LABEL = {
@@ -65,10 +65,10 @@ async def main() -> None:
                 update={"include_past": True, "timeframe_months": 24}
             )
         })
-    matcher = matcher_for(config.mode, config.location)
+    matcher = matcher_for(config.mode, config.location, config.nearby)
     today = date.fromisoformat(args.today) if args.today else date.today()
 
-    candidates = load_candidates()
+    candidates = load_candidates(candidates_path(config.mode, config.location))
     readings = load_readings()
     screened = screen_all(candidates, config, matcher, readings, today)
 

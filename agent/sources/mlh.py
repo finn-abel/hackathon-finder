@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from typing import Any, Iterator
 
 from browser_use import Browser
@@ -23,7 +24,11 @@ from core.models import Candidate
 NAME = "mlh"
 
 EVENTS_URL = "https://www.mlh.com/seasons/{season}/events"
-DEFAULT_SEASON = "2026"
+
+#: MLH seasons run roughly August to July and are named for the year they end
+#: in, so the 2027 season starts in August 2026. Hardcoding a season silently
+#: scrapes an archive: in September 2026 the 2026 season is 252/254 ended.
+SEASON_ROLLS_OVER_IN_MONTH = 8
 
 #: Every event object in the payload starts with a uuid id and a slug.
 _EVENT_START_RE = re.compile(r'\{"id":"[0-9a-f-]{36}","slug":"')
@@ -56,8 +61,25 @@ _COUNTRY_NAMES = {
 }
 
 
-def events_url(season: str = DEFAULT_SEASON) -> str:
-    return EVENTS_URL.format(season=season)
+def current_season(today: date | None = None) -> str:
+    """The season MLH is currently listing, from the calendar."""
+    today = today or date.today()
+    year = today.year + 1 if today.month >= SEASON_ROLLS_OVER_IN_MONTH else today.year
+    return str(year)
+
+
+def seasons_to_fetch(today: date | None = None) -> tuple[str, ...]:
+    """The current season, plus the one before it.
+
+    The previous season still holds events running in the first weeks of the
+    new one, and near a rollover the current list can be sparse.
+    """
+    current = int(current_season(today))
+    return (str(current), str(current - 1))
+
+
+def events_url(season: str | None = None) -> str:
+    return EVENTS_URL.format(season=season or current_season())
 
 
 def _balanced_object(text: str, start: int) -> str | None:
@@ -145,6 +167,7 @@ def to_candidates(events: Iterator[dict[str, Any]] | tuple[dict[str, Any], ...])
                 ends_at=(event.get("endsAt") or "").strip(),
                 format_raw=_FORMATS.get(event.get("formatType") or "", event.get("formatType") or ""),
                 website_url=(event.get("websiteUrl") or "").strip(),
+                location_structured=bool((event.get("venueAddress") or {}).get("city")),
                 found_via="season list",
             )
         )
@@ -152,11 +175,19 @@ def to_candidates(events: Iterator[dict[str, Any]] | tuple[dict[str, Any], ...])
 
 
 async def collect(browser: Browser, request: CollectRequest) -> tuple[Candidate, ...]:
-    """Load the season list once and return every event on it.
+    """Load each season's list and return every event on it.
 
-    No search terms and no scrolling: MLH publishes the whole season in one
+    No search terms and no scrolling: MLH publishes a whole season in one
     payload, and `core.location` does the area filtering afterwards.
     """
-    await browser.navigate_to(events_url())
-    html = (await evaluate_json(browser, _PAGE_HTML_JS))["html"]
-    return to_candidates(extract_events(html))
+    seasons = request.seasons or seasons_to_fetch()
+    found: list[Candidate] = []
+    seen: set[str] = set()
+    for season in seasons:
+        await browser.navigate_to(events_url(season))
+        html = (await evaluate_json(browser, _PAGE_HTML_JS))["html"]
+        for candidate in to_candidates(extract_events(html)):
+            if candidate.key not in seen:
+                seen.add(candidate.key)
+                found.append(candidate)
+    return tuple(found)

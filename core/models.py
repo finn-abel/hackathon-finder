@@ -43,6 +43,11 @@ class Candidate(BaseModel):
     ends_at: str = ""         # ISO 8601, if the source states one
     format_raw: str = ""      # the source's own word for the format
     website_url: str = ""     # the event's own site, when the source links it
+    #: True when the source published a complete, structured address (city +
+    #: region + country) rather than a free-text venue. If such a location does
+    #: not name the target area, it is somewhere else — that is a fact from the
+    #: source, not a guess about geography.
+    location_structured: bool = False
     also_in: tuple[str, ...] = ()  # other sources that listed this same event
 
     @property

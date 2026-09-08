@@ -78,3 +78,36 @@ def test_mlh_events_never_need_a_reader():
 def test_events_with_no_name_or_no_link_are_dropped():
     assert to_candidates([{"name": "", "url": "/events/x/prizes"}]) == ()
     assert to_candidates([{"name": "X", "url": "", "websiteUrl": ""}]) == ()
+
+
+# --- the season must come from the calendar, not a constant ---------------
+
+
+from datetime import date
+
+from agent.sources.mlh import current_season, seasons_to_fetch
+
+
+@pytest.mark.parametrize(
+    "today,season",
+    [
+        (date(2026, 9, 8), "2027"),    # September 2026 is the 2027 season
+        (date(2026, 8, 1), "2027"),    # the rollover month
+        (date(2026, 7, 31), "2026"),   # the day before it
+        (date(2027, 1, 10), "2027"),
+        (date(2027, 6, 30), "2027"),
+    ],
+)
+def test_the_season_is_worked_out_from_today(today, season):
+    # Hardcoding this scraped an archive: in September 2026 the 2026 season
+    # was 252/254 ended, so almost nothing current reached the shortlist.
+    assert current_season(today) == season
+
+
+def test_the_previous_season_is_fetched_too():
+    # Events early in a new season are often still filed under the old one.
+    assert seasons_to_fetch(date(2026, 9, 8)) == ("2027", "2026")
+
+
+def test_the_url_follows_the_season():
+    assert events_url("2027").endswith("/seasons/2027/events")

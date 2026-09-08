@@ -163,3 +163,49 @@ def test_counts_describe_the_whole_run_not_just_the_rows_kept():
     results = build([candidate("Alpha"), candidate("Charlie", "Waterloo, ON")])
     assert results.run.counts["collected"] == 2
     assert results.run.counts["in_file"] == len(results.results) == 1
+
+
+def test_general_mode_records_its_own_area_in_the_run_context():
+    from core.location import target_matcher
+
+    cfg = Config(mode="general", location="Waterloo, ON", criteria="x",
+                 filters=Filters(include_past=True, timeframe_months=24))
+    screened = screen_all([candidate("Alpha", "Waterloo, ON")], cfg,
+                          target_matcher("Waterloo, ON"), {}, TODAY)
+    from core.results import build_results
+
+    results = build_results([], screened, screened, cfg, "Waterloo, ON", "h", {}, TODAY)
+    assert results.run.mode == "general"
+    assert results.run.location == "Waterloo, ON"
+    assert results.run.target_area == "Waterloo, ON"
+    assert results.results[0].derived.area == "Waterloo, ON"
+
+
+def test_every_flag_code_the_run_can_emit_is_documented():
+    # Same rule as the other vocabularies: nothing appears in the file that
+    # the file does not explain.
+    from core.flags import CATALOGUE
+    from core.results import LEGEND
+
+    assert set(LEGEND["flag"]) == set(CATALOGUE)
+    for severity in ("info", "warn", "attention"):
+        assert severity in LEGEND["flag_severity"]
+
+
+def test_flags_and_attention_reach_the_file():
+    broken = Candidate(title="Broken", url="https://broken.devpost.com/",
+                       location_raw="Toronto, ON", dates_raw="whenever")
+    row = build([broken]).results[0]
+    assert row.derived.needs_attention is True
+    assert "no_parseable_date" in {f.code for f in row.derived.flags}
+    assert row.derived.starts_on is None       # not invented
+
+
+def test_the_run_summarises_flags_across_everything_collected():
+    results = build([
+        Candidate(title="Broken", url="https://b.devpost.com/", location_raw="Toronto, ON",
+                  dates_raw="whenever"),
+        candidate("Alpha"),
+    ])
+    assert results.run.flag_counts["no_parseable_date"] == 1
+    assert results.run.counts["needs_attention"] >= 1

@@ -47,7 +47,7 @@ def test_an_unplaceable_venue_is_unresolved_not_excluded():
     item = screened(location_raw="Sheridan College Hazel McCallion Campus",
                     dates_raw="Oct 24, 2026")
     assert item.bucket == "unresolved"
-    assert "not read yet" in item.flags
+    assert "not_read" in {f.code for f in item.flags}
 
 
 def test_online_with_no_area_link_is_excluded():
@@ -108,13 +108,13 @@ def test_an_ended_event_keeps_its_real_year():
 def test_a_deadline_borrowed_from_the_end_date_is_flagged_as_such():
     item = screened(dates_raw="Oct 24 - 25, 2026")
     assert item.deadline.date == date(2026, 10, 25)
-    assert "deadline assumed from the event's last day" in item.flags
+    assert "assumed_deadline" in {f.code for f in item.flags}
 
 
 def test_a_missing_date_is_flagged_not_invented():
     item = screened(dates_raw="TBD")
     assert item.starts_on is None
-    assert "no parseable date" in item.flags
+    assert "no_parseable_date" in {f.code for f in item.flags}
 
 
 # --- config filters -------------------------------------------------------
@@ -177,3 +177,57 @@ def test_include_past_actually_keeps_past_events():
 
     keeping = Config(criteria="x", filters=Filters(include_past=True, timeframe_months=24))
     assert screened(keeping, **past).bucket == "primary"
+
+
+# --- general mode -----------------------------------------------------------
+
+
+def test_a_structured_address_elsewhere_is_excluded_not_queued_for_reading():
+    # MLH publishes city+region+country. If none of it is the target area,
+    # opening the page cannot change that — so it must not cost an AI read.
+    montreal = Candidate(title="MPC Hacks", url="https://www.mlh.com/events/mpc-hacks",
+                         source="mlh", location_raw="Montreal, Quebec, Canada",
+                         dates_raw="Oct 24, 2026", location_structured=True)
+    matcher = target_matcher("Waterloo, ON")
+    cfg = Config(mode="general", location="Waterloo, ON", criteria="x")
+    item = screen(montreal, cfg, matcher, None, TODAY)
+    assert item.bucket == "excluded"
+    assert "structured address" in item.reasons[0]
+
+
+def test_a_free_text_venue_is_still_worth_reading():
+    # Devpost gives no structured address, so "unclear" stays "unresolved".
+    venue = Candidate(title="X", url="https://x.devpost.com/",
+                      location_raw="Sheridan College Hazel McCallion Campus",
+                      dates_raw="Oct 24, 2026", location_structured=False)
+    assert screened(location_raw=venue.location_raw, dates_raw="Oct 24, 2026").bucket == "unresolved"
+
+
+def test_a_reading_overrides_the_structured_shortcut():
+    # Once a page has been read, its own words decide, not the tile's address.
+    c = Candidate(title="X", url="https://x.devpost.com/", location_raw="Somewhere, Nowhere, Canada",
+                  dates_raw="Oct 24, 2026", location_structured=True)
+    reading = Reading(candidate=c, facts=ListingFacts.model_validate({
+        "title": None, "location_text": "Toronto, ON", "event_format": "in-person",
+        "format_evidence": None, "dates_text": None, "deadline_text": None,
+        "eligibility_text": None, "themes": [], "beginner_friendly": "unstated",
+        "beginner_evidence": None}))
+    assert screen(c, CONFIG, GTA_MATCHER, reading, TODAY).bucket == "primary"
+
+
+def test_nearby_names_widen_a_general_area():
+    matcher = target_matcher("Waterloo, ON", nearby=("Kitchener",))
+    cfg = Config(mode="general", location="Waterloo, ON", nearby=("Kitchener",), criteria="x")
+    item = screen(candidate(location_raw="Kitchener, Ontario", dates_raw="Oct 24, 2026"),
+                  cfg, matcher, None, TODAY)
+    assert item.bucket == "primary"
+
+
+def test_place_is_the_single_source_of_truth_for_location_bucketing():
+    # collect.py and screen.py both call place(); if they diverged, the
+    # collector would report different counts than the screening pass.
+    from core.screening import place
+
+    c = candidate(location_raw="Toronto, ON", dates_raw="Oct 24, 2026")
+    _, bucket, _ = place(c, GTA_MATCHER)
+    assert bucket == screen(c, CONFIG, GTA_MATCHER, None, TODAY).bucket

@@ -9,6 +9,7 @@ go stale against a changed GTA definition.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Iterable
 from pathlib import Path
@@ -16,12 +17,37 @@ from pathlib import Path
 from core.config import PROJECT_ROOT
 from core.models import Candidate, Judgement, Reading
 
-CANDIDATES_PATH = PROJECT_ROOT / "candidates.json"
+RUNS_DIR = PROJECT_ROOT / "runs"
+
+#: Readings and judgements are keyed by candidate URL and are the same fact
+#: whichever mode asked for them — a Devpost page says what it says. Only the
+#: *collection* is mode-specific, so only that is filed per run.
 READINGS_PATH = PROJECT_ROOT / "readings.json"
+
+
+def run_slug(mode: str, location: str | None = None) -> str:
+    """A filesystem-safe name for one mode+location combination."""
+    if mode == "gta":
+        return "gta"
+    cleaned = re.sub(r"[^a-z0-9]+", "-", (location or "").casefold()).strip("-")
+    return f"general-{cleaned}" if cleaned else "general"
+
+
+def candidates_path(mode: str = "gta", location: str | None = None) -> Path:
+    """Where one run's collected candidates live.
+
+    Filed per run so switching modes does not throw away the other mode's
+    collection — `general` for Waterloo and `gta` can both stay warm.
+    """
+    return RUNS_DIR / run_slug(mode, location) / "candidates.json"
+
+
+CANDIDATES_PATH = candidates_path()
 
 
 def _write_json(path: Path, payload: dict) -> Path:
     """Write via a temp file and rename, so an interrupt cannot truncate it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     temp.replace(path)
@@ -40,7 +66,10 @@ def save_candidates(candidates: tuple[Candidate, ...], path: Path = CANDIDATES_P
 
 def load_candidates(path: Path = CANDIDATES_PATH) -> tuple[Candidate, ...]:
     if not path.exists():
-        raise FileNotFoundError(f"No cached candidates at {path} — run `uv run collect.py` first")
+        raise FileNotFoundError(
+            f"No cached candidates at {path.relative_to(PROJECT_ROOT)} — "
+            f"run `uv run collect.py` for this mode first"
+        )
     payload = json.loads(path.read_text(encoding="utf-8"))
     return tuple(Candidate.model_validate(row) for row in payload.get("candidates", ()))
 

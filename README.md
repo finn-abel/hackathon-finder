@@ -223,3 +223,97 @@ uv run judge.py --include-past          # writes results.json
 uv run judge.py --no-save               # print only
 uv run judge.py --out /tmp/scan.json
 ```
+
+## The dashboard
+
+A single static HTML file — no build step, no framework, no CDN. Plain 90s
+web page: Times New Roman, bordered tables, grey header cells.
+
+```bash
+uv run judge.py --include-past    # write results.json
+uv run dashboard.py              # serve it and open a browser
+uv run dashboard.py --port 8080 --no-open
+```
+
+The page shows the run's mode, target area, criteria and counts at the top,
+then a ranked table: name (linked to the listing), date, deadline, location,
+format, fit, eligibility and the reason behind the score. Deadlines are
+highlighted — `soon` in yellow, `passed` rows greyed out — and code's
+assumptions appear under each name, so "deadline assumed from the event's
+last day" is visible rather than buried.
+
+Sort by clicking any column header. Filters live in the URL, so a filtered
+view is a shareable link:
+
+```
+/dashboard/index.html?minFit=4&deadline=open&sort=deadline
+```
+
+The server binds to `127.0.0.1` only. All text is rendered with `textContent`,
+never `innerHTML` — every title and reason came off someone else's page.
+
+## general mode
+
+`gta` mode is the default. Pass a location and the same engine screens that
+area instead — collection, extraction, judging, output and dashboard are
+unchanged.
+
+```bash
+uv run collect.py --mode general --location "Waterloo, ON"
+uv run judge.py   --mode general --location "Waterloo, ON" --include-past
+uv run dashboard.py
+```
+
+```yaml
+mode: general
+location: "Waterloo, ON"
+nearby: ["Kitchener", "Cambridge"]   # extra names counted as inside the area
+```
+
+Two things make it practical:
+
+- **Each run keeps its own collection** under `runs/<slug>/candidates.json`, so
+  switching between `gta` and a location does not throw the other away. Page
+  readings and fit judgements stay shared — a Devpost page says the same thing
+  whichever mode asked, and judgements are already keyed by criteria.
+- **A structured address settles the area without a gazetteer.** Only the GTA
+  matcher knows what is "elsewhere", so in `general` mode an MLH event in
+  Montreal would otherwise be "unclear" and queued for an AI read. MLH
+  publishes a full city/region/country, and if none of it names the target
+  area, that is a fact from the source. This cut Waterloo's unresolved pile
+  from 246 to 11.
+
+## Handling the mess
+
+Nothing is silently dropped and nothing is silently guessed. When code has to
+assume something, finds two facts that contradict each other, or cannot reach
+a page, it records a flag and the listing stays in the output.
+
+Flags carry a severity — `info` (worth knowing), `warn` (thinner data than it
+looks), `attention` (a person should look). `core/flags.py` holds the
+catalogue; every code is documented in `results.json`'s legend, and a test
+asserts the two never drift apart.
+
+| flag | meaning |
+|---|---|
+| `read_failed` | the detail page could not be read |
+| `no_parseable_date` | no date could be parsed |
+| `assumed_deadline` | deadline taken from the event's last day, not stated |
+| `online_but_placed` | tagged for a place but the listing says it runs online |
+| `format_conflict` | the source and the page disagree about the format |
+| `deadline_after_event` | the deadline falls after the event ends |
+| `possible_duplicate` | another listing looks like the same event |
+| `suspect_title` | the title itself warns the listing is stale or wrong |
+
+Near-duplicates are **flagged, never merged**: `core/merge.py` fuses records
+only on an exact title match, and `core/duplicates.py` makes the softer call
+that "DeerHacks V", "DeerHacks V (2026)" and "DeerHacks 2023" are worth
+looking at together. Deciding which is which is a person's job.
+
+In the dashboard, attention rows get a red left border and their flags print
+under the name. Tick **Needs attention only** to see just those, or link
+straight to them:
+
+```
+/dashboard/index.html?attention=1
+```

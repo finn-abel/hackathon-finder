@@ -18,10 +18,11 @@ from agent.session import steel_browser
 from agent.sources import CollectRequest, registry, source_names
 from agent.sources.devpost import search_terms_for
 from core.config import Config, build_parser, config_from_args
-from core.location import classify, matcher_for
+from core.location import matcher_for
+from core.screening import place
 from core.merge import merge
 from core.models import Candidate
-from core.store import save_candidates
+from core.store import candidates_path, save_candidates
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,14 +62,15 @@ def print_candidate(index: int, candidate: Candidate, reason: str) -> None:
 async def main() -> None:
     args = parse_args()
     config = config_from_args(args)
-    matcher = matcher_for(config.mode, config.location)
+    matcher = matcher_for(config.mode, config.location, config.nearby)
     terms = terms_for(config, args.terms)
     max_scrolls = config.collect.max_scrolls if args.max_scrolls is None else args.max_scrolls
     chosen = tuple(args.sources or config.collect.sources)
     sources = registry()
 
     request = CollectRequest(
-        mode=config.mode, location=config.location, terms=terms, max_scrolls=max_scrolls
+        mode=config.mode, location=config.location, terms=terms,
+        max_scrolls=max_scrolls, seasons=config.collect.seasons,
     )
 
     print(f"Mode     {config.mode}  →  {matcher.name}")
@@ -85,19 +87,19 @@ async def main() -> None:
                 # One broken source must not lose the others' results.
                 print(f"  {name:<9} FAILED — {type(exc).__name__}: {exc}")
                 continue
-            in_area = sum(1 for c in found if classify(c.location_raw, matcher).in_area)
+            in_area = sum(1 for c in found if place(c, matcher)[1] == "primary")
             print(f"  {name:<9} {len(found):>3} found, {in_area} already placed in {matcher.name}")
             collected.extend(found)
 
     candidates = merge(collected)
 
-    verdicts = {c.key: classify(c.location_raw, matcher) for c in candidates}
+    placed = {c.key: place(c, matcher) for c in candidates}
 
-    def bucket(*statuses: str) -> list[Candidate]:
-        return [c for c in candidates if verdicts[c.key].status in statuses]
+    def bucket(*buckets: str) -> list[Candidate]:
+        return [c for c in candidates if placed[c.key][1] in buckets]
 
-    confirmed, unclear = bucket("in-area"), bucket("unclear")
-    dropped = bucket("elsewhere", "online-only")
+    confirmed, unclear = bucket("primary", "online-gta"), bucket("unresolved")
+    dropped = bucket("excluded")
 
     print(f"\n{'=' * 72}")
     print(f"{len(collected)} collected → {len(candidates)} unique candidates for {matcher.name}")
@@ -108,21 +110,21 @@ async def main() -> None:
 
     print(f"\n### Confirmed in {matcher.name} ({len(confirmed)})")
     for index, candidate in enumerate(confirmed, start=1):
-        print_candidate(index, candidate, verdicts[candidate.key].reason)
+        print_candidate(index, candidate, placed[candidate.key][2])
 
     print(f"\n\n### Needs the listing read ({len(unclear)})")
     print("    Code cannot place these. Step 5 opens them and lets the model read.")
     for index, candidate in enumerate(unclear, start=1):
-        print_candidate(index, candidate, verdicts[candidate.key].reason)
+        print_candidate(index, candidate, placed[candidate.key][2])
 
-    saved = save_candidates(candidates)
+    saved = save_candidates(candidates, candidates_path(config.mode, config.location))
     print(f"\n\nCached {len(candidates)} candidates to {saved.name} — "
           f"`uv run read.py` works from this file, no browser needed.")
 
     if args.all and dropped:
         print(f"\n\n### Ruled out ({len(dropped)})")
         for index, candidate in enumerate(dropped, start=1):
-            print_candidate(index, candidate, verdicts[candidate.key].reason)
+            print_candidate(index, candidate, placed[candidate.key][2])
 
 
 if __name__ == "__main__":

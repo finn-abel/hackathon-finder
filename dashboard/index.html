@@ -1,0 +1,395 @@
+<meta charset="utf-8">
+<title>Hackathon Finder</title>
+<style>
+  :root {
+    --ink: #000000;
+    --paper: #ffffff;
+    --chrome: #c0c0c0;
+    --rule: #808080;
+    --link: #0000ee;
+    --link-seen: #551a8b;
+    --soon: #ffff99;
+    --passed: #eeeeee;
+    --muted: #555555;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Times New Roman", Times, serif;
+    font-size: 15px;
+    margin: 16px;
+  }
+  h1 { font-size: 26px; text-align: center; margin: 0 0 2px; }
+  .tagline { text-align: center; font-style: italic; color: var(--muted); margin: 0 0 10px; }
+  hr { border: 0; border-top: 2px solid var(--rule); margin: 10px 0; }
+
+  dl.run { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px; }
+  dl.run dt { font-weight: bold; }
+  dl.run dd { margin: 0; }
+
+  fieldset { border: 1px solid var(--rule); margin: 10px 0; padding: 6px 10px; }
+  legend { font-weight: bold; padding: 0 4px; }
+  label { margin-right: 14px; white-space: nowrap; }
+  select, input { font-family: inherit; font-size: 14px; }
+
+  table { border-collapse: collapse; width: 100%; }
+  caption { text-align: left; font-weight: bold; padding: 4px 0; }
+  th, td { border: 1px solid var(--ink); padding: 3px 6px; vertical-align: top; text-align: left; }
+  th { background: var(--chrome); white-space: nowrap; }
+  th button {
+    all: unset; cursor: pointer; font-weight: bold; font-family: inherit; font-size: inherit;
+  }
+  th button:focus-visible { outline: 2px solid var(--link); }
+  td.num, td.date { font-family: "Courier New", Courier, monospace; white-space: nowrap; }
+  tr.soon td.date.deadline { background: var(--soon); font-weight: bold; }
+  tr.passed { color: var(--muted); background: var(--passed); }
+  tr.unresolved td.name { font-style: italic; }
+  .stars { font-family: "Courier New", Courier, monospace; white-space: nowrap; }
+  .flags { color: var(--muted); font-size: 13px; }
+  .flag { display: block; }
+  .flag-attention { color: #a00000; font-weight: bold; }
+  .flag-warn { color: #7a5000; }
+  .flag-info { color: var(--muted); }
+  tr.attention td.name { border-left: 4px solid #a00000; }
+  .note { color: var(--muted); font-size: 13px; }
+  a { color: var(--link); }
+  a:visited { color: var(--link-seen); }
+  footer { margin-top: 14px; font-size: 13px; color: var(--muted); }
+</style>
+
+<h1>Hackathon Finder</h1>
+<p class="tagline">a programmatic fuzzy-criteria screener</p>
+<hr>
+
+<dl class="run" id="run"></dl>
+<hr>
+
+<fieldset>
+  <legend>Sort &amp; filter</legend>
+  <label>Min fit
+    <select id="minFit">
+      <option value="-1">any</option>
+      <option value="5">5 only</option>
+      <option value="4">4+</option>
+      <option value="3">3+</option>
+      <option value="1">1+</option>
+    </select>
+  </label>
+  <label>Deadline
+    <select id="deadline">
+      <option value="">any</option>
+      <option value="open">not passed</option>
+      <option value="soon">soon</option>
+      <option value="upcoming">upcoming</option>
+      <option value="passed">passed</option>
+    </select>
+  </label>
+  <label>Bucket
+    <select id="bucket"><option value="">any</option></select>
+  </label>
+  <label>Format
+    <select id="format"><option value="">any</option></select>
+  </label>
+  <label><input id="attention" type="checkbox"> Needs attention only</label>
+  <label>Search <input id="search" type="search" size="18" placeholder="name or place"></label>
+  <button id="reset" type="button">Reset</button>
+</fieldset>
+
+<table>
+  <caption id="count"></caption>
+  <thead>
+    <tr id="head"></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<footer id="footer"></footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var COLUMNS = [
+    { key: "rank",     label: "#",           sort: byRank },
+    { key: "name",     label: "Name",        sort: byText(function (r) { return r.title; }) },
+    { key: "date",     label: "Date",        sort: byDate(function (r) { return r.derived.starts_on; }) },
+    { key: "deadline", label: "Deadline",    sort: byDate(function (r) { return r.derived.deadline_date; }) },
+    { key: "location", label: "Location",    sort: byText(function (r) { return r.raw.location; }) },
+    { key: "format",   label: "Format",      sort: byText(function (r) { return r.derived.event_format; }) },
+    { key: "fit",      label: "Fit",         sort: byFit },
+    { key: "elig",     label: "Eligibility", sort: byText(function (r) { return r.raw.eligibility || ""; }) },
+    { key: "why",      label: "Why",         sort: byText(function (r) { return r.fit ? r.fit.reason : ""; }) }
+  ];
+
+  var state = { rows: [], sort: "rank", desc: false };
+
+  function byRank(a, b) { return (a.rank || 1e6) - (b.rank || 1e6); }
+  function byFit(a, b) { return (b.fit ? b.fit.score : -1) - (a.fit ? a.fit.score : -1); }
+  function byText(pick) {
+    return function (a, b) { return String(pick(a) || "").localeCompare(String(pick(b) || "")); };
+  }
+  function byDate(pick) {
+    return function (a, b) {
+      var x = pick(a) || "9999-99-99", y = pick(b) || "9999-99-99";
+      return x < y ? -1 : x > y ? 1 : 0;
+    };
+  }
+
+  function el(tag, text, className) {
+    var node = document.createElement(tag);
+    // textContent, never innerHTML: every string here came off a scraped page.
+    if (text !== undefined && text !== null) { node.textContent = String(text); }
+    if (className) { node.className = className; }
+    return node;
+  }
+
+  function stars(score) {
+    return "*".repeat(score) + ".".repeat(5 - score) + " " + score;
+  }
+
+  function describeRun(run) {
+    // In general mode the target area IS the location, so only show both when
+    // they actually differ (a nearby list, or a location that got normalised).
+    var where = run.target_area;
+    if (run.location && run.location !== run.target_area) {
+      where += " (from \"" + run.location + "\")";
+    }
+    var counts = Object.keys(run.counts).map(function (k) {
+      return k + " " + run.counts[k];
+    }).join(", ");
+    return [
+      ["Mode", run.mode + " — " + where],
+      ["Criteria", run.criteria],
+      ["Run for", run.today + "  (sources: " + run.sources.join(", ") + ")"],
+      ["Filters", "next " + run.filters.timeframe_months + " months, format " +
+                  run.filters.format + (run.filters.include_past ? ", past events included" : "")],
+      ["Counts", counts],
+      ["Flags", Object.keys(run.flag_counts || {}).map(function (code) {
+        return code + " " + run.flag_counts[code];
+      }).join(", ") || "none"]
+    ];
+  }
+
+  function fillRun(run) {
+    var dl = document.getElementById("run");
+    describeRun(run).forEach(function (pair) {
+      dl.appendChild(el("dt", pair[0]));
+      dl.appendChild(el("dd", pair[1]));
+    });
+  }
+
+  function fillHead() {
+    var head = document.getElementById("head");
+    COLUMNS.forEach(function (column) {
+      var th = el("th");
+      th.scope = "col";
+      var button = el("button", column.label);
+      button.type = "button";
+      button.addEventListener("click", function () {
+        state.desc = state.sort === column.key ? !state.desc : false;
+        state.sort = column.key;
+        render();
+      });
+      th.appendChild(button);
+      th.dataset.key = column.key;
+      head.appendChild(th);
+    });
+  }
+
+  function fillOptions(id, values) {
+    var select = document.getElementById(id);
+    values.sort().forEach(function (value) {
+      select.appendChild(el("option", value)).value = value;
+    });
+  }
+
+  function passesFilters(row) {
+    var minFit = Number(document.getElementById("minFit").value);
+    var deadline = document.getElementById("deadline").value;
+    var bucket = document.getElementById("bucket").value;
+    var format = document.getElementById("format").value;
+    var query = document.getElementById("search").value.trim().toLowerCase();
+    var attentionOnly = document.getElementById("attention").checked;
+    var status = row.derived.deadline_status;
+
+    if (attentionOnly && !row.derived.needs_attention) { return false; }
+
+    if (minFit >= 0 && (!row.fit || row.fit.score < minFit)) { return false; }
+    if (deadline === "open" && status === "passed") { return false; }
+    if (deadline && deadline !== "open" && status !== deadline) { return false; }
+    if (bucket && row.derived.bucket !== bucket) { return false; }
+    if (format && row.derived.event_format !== format) { return false; }
+    if (query) {
+      var haystack = (row.title + " " + row.raw.location + " " +
+                      row.derived.places.join(" ")).toLowerCase();
+      if (haystack.indexOf(query) === -1) { return false; }
+    }
+    return true;
+  }
+
+  function buildRow(row) {
+    var tr = el("tr");
+    tr.classList.add(row.derived.deadline_status);
+    if (row.derived.bucket === "unresolved") { tr.classList.add("unresolved"); }
+    if (row.derived.needs_attention) { tr.classList.add("attention"); }
+
+    tr.appendChild(el("td", row.rank === null ? "—" : row.rank, "num"));
+
+    var name = el("td", null, "name");
+    var link = el("a", row.title);
+    link.href = row.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    name.appendChild(link);
+    if (row.derived.flags.length) {
+      var list = el("div", null, "flags");
+      row.derived.flags.forEach(function (one) {
+        var mark = one.severity === "attention" ? "!! " : one.severity === "warn" ? "! " : "";
+        list.appendChild(el("span", mark + one.detail, "flag flag-" + one.severity));
+      });
+      name.appendChild(list);
+    }
+    tr.appendChild(name);
+
+    tr.appendChild(el("td", row.derived.starts_on || "—", "date"));
+
+    var deadline = el("td", row.derived.deadline_date || "—", "date deadline");
+    deadline.classList.add(row.derived.deadline_status);
+    deadline.title = "deadline status: " + row.derived.deadline_status;
+    tr.appendChild(deadline);
+
+    var place = row.derived.places.length ? row.derived.places.join(", ") : row.raw.location;
+    var location = el("td", place || "—");
+    location.title = row.raw.location || "";
+    tr.appendChild(location);
+
+    tr.appendChild(el("td", row.derived.event_format || "—"));
+
+    var fit = el("td", null);
+    if (row.fit) {
+      fit.appendChild(el("span", stars(row.fit.score), "stars"));
+    } else {
+      fit.appendChild(el("span", "not judged", "note"));
+    }
+    tr.appendChild(fit);
+
+    var elig = row.raw.eligibility;
+    var eligCell = el("td", elig ? (elig.length > 90 ? elig.slice(0, 90) + "…" : elig)
+                                 : (row.raw.was_read ? "not stated" : "not read"));
+    if (elig) { eligCell.title = elig; }
+    if (!elig) { eligCell.className = "note"; }
+    tr.appendChild(eligCell);
+
+    var why = el("td", row.fit ? row.fit.reason : "—");
+    if (row.fit && row.fit.missing.length) {
+      why.appendChild(el("div", "unknown: " + row.fit.missing.join(", "), "flags"));
+    }
+    tr.appendChild(why);
+
+    return tr;
+  }
+
+  function render() {
+    var column = COLUMNS.filter(function (c) { return c.key === state.sort; })[0] || COLUMNS[0];
+    var visible = state.rows.filter(passesFilters).slice().sort(column.sort);
+    if (state.desc) { visible.reverse(); }
+
+    var body = document.getElementById("rows");
+    body.textContent = "";
+    visible.forEach(function (row) { body.appendChild(buildRow(row)); });
+
+    document.getElementById("count").textContent =
+      "Showing " + visible.length + " of " + state.rows.length + " listings" +
+      " — sorted by " + column.label + (state.desc ? " (descending)" : "");
+
+    Array.prototype.forEach.call(document.querySelectorAll("th"), function (th) {
+      th.setAttribute("aria-sort",
+        th.dataset.key === state.sort ? (state.desc ? "descending" : "ascending") : "none");
+    });
+
+    writeUrl();
+  }
+
+  var CONTROLS = ["minFit", "deadline", "bucket", "format", "search"];
+  var TOGGLES = ["attention"];
+
+  function readUrl() {
+    var params = new URLSearchParams(location.search);
+    CONTROLS.forEach(function (id) {
+      var value = params.get(id);
+      if (value !== null) { document.getElementById(id).value = value; }
+    });
+    TOGGLES.forEach(function (id) {
+      document.getElementById(id).checked = params.get(id) === "1";
+    });
+    if (params.get("sort")) { state.sort = params.get("sort"); }
+    state.desc = params.get("desc") === "1";
+  }
+
+  function writeUrl() {
+    var params = new URLSearchParams();
+    CONTROLS.forEach(function (id) {
+      var value = document.getElementById(id).value;
+      var isDefault = (id === "minFit") ? value === "-1" : value === "";
+      if (!isDefault) { params.set(id, value); }
+    });
+    TOGGLES.forEach(function (id) {
+      if (document.getElementById(id).checked) { params.set(id, "1"); }
+    });
+    if (state.sort !== "rank") { params.set("sort", state.sort); }
+    if (state.desc) { params.set("desc", "1"); }
+    var query = params.toString();
+    history.replaceState(null, "", query ? "?" + query : location.pathname);
+  }
+
+  function wire() {
+    ["minFit", "deadline", "bucket", "format", "attention"].forEach(function (id) {
+      document.getElementById(id).addEventListener("change", render);
+    });
+    document.getElementById("search").addEventListener("input", render);
+    document.getElementById("reset").addEventListener("click", function () {
+      document.getElementById("minFit").value = "-1";
+      ["deadline", "bucket", "format"].forEach(function (id) {
+        document.getElementById(id).value = "";
+      });
+      document.getElementById("search").value = "";
+      document.getElementById("attention").checked = false;
+      state.sort = "rank";
+      state.desc = false;
+      render();
+    });
+  }
+
+  function unique(rows, pick) {
+    var seen = {};
+    rows.forEach(function (row) {
+      var value = pick(row);
+      if (value) { seen[value] = true; }
+    });
+    return Object.keys(seen);
+  }
+
+  fetch("../results.json", { cache: "no-store" })
+    .then(function (response) {
+      if (!response.ok) { throw new Error("HTTP " + response.status); }
+      return response.json();
+    })
+    .then(function (data) {
+      state.rows = data.results;
+      fillRun(data.run);
+      fillHead();
+      fillOptions("bucket", unique(data.results, function (r) { return r.derived.bucket; }));
+      fillOptions("format", unique(data.results, function (r) { return r.derived.event_format; }));
+      wire();
+      readUrl();   // after the option lists exist, so a filtered link restores
+      render();
+      document.getElementById("footer").textContent =
+        "Generated " + data.run.generated_at + " · schema " + data.schema_version +
+        " · criteria fingerprint " + data.run.criteria_hash;
+    })
+    .catch(function (error) {
+      document.getElementById("count").textContent =
+        "Could not load results.json (" + error.message + "). Run: uv run judge.py";
+    });
+})();
+</script>

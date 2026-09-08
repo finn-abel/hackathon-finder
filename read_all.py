@@ -20,7 +20,7 @@ from agent.session import steel_browser
 from core.config import build_parser, config_from_args
 from core.location import classify, matcher_for
 from core.models import Candidate, Reading
-from core.store import load_candidates, load_readings, save_readings
+from core.store import candidates_path, load_candidates, load_readings, save_readings
 
 RULED_OUT = ("elsewhere", "online-only")
 
@@ -80,9 +80,9 @@ def report_status(candidates: tuple[Candidate, ...], readings: dict[str, Reading
 async def main() -> None:
     args = parse_args()
     config = config_from_args(args)
-    matcher = matcher_for(config.mode, config.location)
+    matcher = matcher_for(config.mode, config.location, config.nearby)
 
-    candidates = load_candidates()
+    candidates = load_candidates(candidates_path(config.mode, config.location))
     readings = {} if args.refresh else load_readings()
 
     queue = [c for c in worth_reading(candidates, matcher, args.include_ruled_out)
