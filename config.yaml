@@ -1,0 +1,19 @@
+# How the screener runs. Everything here is a parameter — nothing downstream
+# is hard-coded. Command-line flags override any of it.
+
+# "gta"     — screen the Greater Toronto Area (the default). `location` is ignored.
+# "general" — screen the area named in `location`.
+mode: gta
+
+# Required in "general" mode, ignored in "gta" mode.
+location: null
+
+# The one sentence the AI judges each listing against. This is the only
+# fuzzy input in the whole config.
+criteria: "beginner-friendly, in-person, open to non-students, AI or web themed"
+
+# Deterministic filters — applied by code, never by the LLM.
+filters:
+  timeframe_months: 3   # only events starting within the next N months
+  format: any           # in-person | online | hybrid | any
+  themes: []            # e.g. ["ai", "web"] — empty means no theme filter

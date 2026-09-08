@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+steel-hackathon-finder-build-plan.md
+# Screener output — regenerated on every run
+results.json

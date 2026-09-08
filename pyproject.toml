@@ -1,0 +1,11 @@
+[project]
+name = "hackathon-finder"
+version = "0.1.0"
+description = "A programmatic fuzzy-criteria screener for hackathons, GTA-first."
+requires-python = ">=3.11"
+dependencies = [
+    "browser-use>=0.13.10",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+    "steel-sdk>=0.19.0",
+]
