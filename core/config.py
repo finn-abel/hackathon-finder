@@ -32,6 +32,15 @@ class Filters(BaseModel):
     themes: tuple[str, ...] = ()
 
 
+class Collect(BaseModel):
+    """How wide to cast the net when gathering candidates."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    search_terms: tuple[str, ...] = ()  # empty means "derive from the mode"
+    max_scrolls: int = Field(default=3, ge=0, le=20)
+
+
 class Config(BaseModel):
     """One immutable run's worth of parameters."""
 
@@ -41,6 +50,7 @@ class Config(BaseModel):
     location: str | None = None
     criteria: str = Field(min_length=1)
     filters: Filters = Filters()
+    collect: Collect = Collect()
 
     @model_validator(mode="after")
     def _general_mode_needs_a_location(self) -> "Config":
@@ -78,8 +88,11 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     return Config.model_validate(raw)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Hackathon finder configuration.")
+def build_parser(add_help: bool = True) -> argparse.ArgumentParser:
+    """The shared config flags. Pass add_help=False to use as an argparse parent."""
+    parser = argparse.ArgumentParser(
+        description="Hackathon finder configuration.", add_help=add_help
+    )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="path to config.yaml")
     parser.add_argument("--mode", choices=("gta", "general"), help="override config mode")
     parser.add_argument("--location", help='override config location, e.g. "Waterloo, ON"')
@@ -87,9 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def resolve_config(argv: list[str] | None = None) -> Config:
+def config_from_args(args: argparse.Namespace) -> Config:
     """Config file first, command-line flags on top. Returns a new Config."""
-    args = build_parser().parse_args(argv)
     base = load_config(args.config)
 
     overrides = {
@@ -103,6 +115,10 @@ def resolve_config(argv: list[str] | None = None) -> Config:
     # model_validate (not model_copy) so overrides are re-validated as a whole —
     # e.g. --mode general with no location anywhere must still fail.
     return Config.model_validate({**base.model_dump(), **overrides})
+
+
+def resolve_config(argv: list[str] | None = None) -> Config:
+    return config_from_args(build_parser().parse_args(argv))
 
 
 def describe(config: Config) -> str:

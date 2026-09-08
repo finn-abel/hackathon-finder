@@ -22,6 +22,15 @@ from core.gta import GTA_AREA_NAME, PLACE_KEYS, Place, normalize
 
 EventFormat = Literal["in-person", "online", "hybrid", "unknown"]
 
+#: What the code could conclude about the location, which is not always
+#: "yes" or "no":
+#:   in-area     — it names a place inside the target area
+#:   elsewhere   — it names a place we know is outside it
+#:   online-only — no venue at all
+#:   unclear     — it names something (usually a venue) code cannot place,
+#:                 so the listing needs a reader. This is the AI's queue.
+LocationStatus = Literal["in-area", "elsewhere", "online-only", "unclear"]
+
 # Keywords are written in normalized form ("in-person" normalizes to "in person").
 ONLINE_WORDS = ("online", "virtual", "remote", "worldwide", "anywhere", "digital", "zoom")
 IN_PERSON_WORDS = ("in person", "onsite", "on site", "irl", "face to face")
@@ -62,6 +71,20 @@ FOREIGN_MARKERS = frozenset(
      "washington", "west virginia", "wisconsin", "wyoming"}
 )
 
+#: Canadian places that are definitely not in the GTA. Naming one is enough
+#: to rule a listing out without opening its page.
+ELSEWHERE_CANADIAN_MARKERS = frozenset(
+    {"waterloo", "kitchener", "cambridge", "guelph", "hamilton", "ottawa",
+     "london", "windsor", "kingston", "barrie", "peterborough", "brantford",
+     "st catharines", "niagara falls", "niagara", "sudbury", "thunder bay",
+     "north bay", "sarnia", "belleville", "orillia", "collingwood",
+     "montreal", "quebec", "laval", "gatineau", "sherbrooke",
+     "vancouver", "victoria", "surrey", "burnaby", "kelowna",
+     "calgary", "edmonton", "winnipeg", "saskatoon", "regina",
+     "halifax", "moncton", "fredericton", "st johns", "charlottetown",
+     "whitehorse", "yellowknife", "iqaluit"}
+)
+
 #: If any of these appear, the listing is Canadian and FOREIGN_MARKERS is moot.
 CANADIAN_MARKERS = frozenset({"canada", "canadian", "ontario", "ont", "on"})
 
@@ -81,9 +104,12 @@ class AreaMatcher:
     name: str
     keys: tuple[str, ...]  # normalized, longest-first
     index: Mapping[str, Place]
-    #: Only the GTA matcher screens out foreign namesakes. A `general` mode
-    #: area is whatever the user asked for, anywhere in the world.
-    reject_foreign: bool = False
+    #: True only for the GTA matcher, which is the one area this project has
+    #: real geographic knowledge of: which namesakes are foreign, and which
+    #: Canadian cities are definitely outside it. A `general` mode area is
+    #: just a name the user supplied, so it can never say "elsewhere" —
+    #: only "in-area" or "unclear".
+    has_gazetteer: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +119,18 @@ class LocationVerdict:
     raw: str
     event_format: EventFormat
     places: tuple[Place, ...]
-    in_area: bool
+    status: LocationStatus
     area: str
     reason: str
+
+    @property
+    def in_area(self) -> bool:
+        return self.status == "in-area"
+
+    @property
+    def needs_a_reader(self) -> bool:
+        """True when only the AI can settle this one — a venue, not a city."""
+        return self.status == "unclear"
 
 
 def _longest_first(keys: Sequence[str]) -> tuple[str, ...]:
@@ -104,7 +139,7 @@ def _longest_first(keys: Sequence[str]) -> tuple[str, ...]:
 
 
 GTA_MATCHER = AreaMatcher(
-    GTA_AREA_NAME, _longest_first(tuple(PLACE_KEYS)), PLACE_KEYS, reject_foreign=True
+    GTA_AREA_NAME, _longest_first(tuple(PLACE_KEYS)), PLACE_KEYS, has_gazetteer=True
 )
 
 
@@ -153,6 +188,11 @@ def names_a_foreign_place(text: str) -> bool:
     return _mentions(text, FOREIGN_MARKERS) and not _mentions(text, CANADIAN_MARKERS)
 
 
+def names_a_known_outside_place(text: str) -> bool:
+    """True if `text` names somewhere we know is outside the GTA."""
+    return names_a_foreign_place(text) or _mentions(text, ELSEWHERE_CANADIAN_MARKERS)
+
+
 def _is_false_positive(text: str, end: int, key: str) -> bool:
     """True if an ambiguous bare name is really a street or an institution."""
     if key not in AMBIGUOUS_BARE_KEYS:
@@ -170,7 +210,7 @@ def find_places(raw: str, matcher: AreaMatcher = GTA_MATCHER) -> tuple[Place, ..
     text = normalize(raw)
     if not text:
         return ()
-    if matcher.reject_foreign and names_a_foreign_place(text):
+    if matcher.has_gazetteer and names_a_foreign_place(text):
         return ()
 
     claimed: list[tuple[int, int]] = []
@@ -215,28 +255,36 @@ def detect_format(raw: str, has_place: bool) -> EventFormat:
 
 
 def classify(raw: str, matcher: AreaMatcher = GTA_MATCHER) -> LocationVerdict:
-    """Classify one listing's location string against the target area."""
+    """Classify one listing's location string against the target area.
+
+    The important outcome is `unclear`. Devpost listings very often show a
+    venue — "Sheridan College Hazel McCallion Campus", "Bur Oak Secondary
+    School" — rather than a city. Code cannot place those, but they are not
+    rejections: they are the listings worth opening and reading.
+    """
     places = find_places(raw, matcher)
     event_format = detect_format(raw, has_place=bool(places))
+    text = normalize(raw)
 
     if places:
         named = ", ".join(place.name for place in places)
-        reason = f"names {named} in {matcher.name}"
-    elif event_format == "online":
-        reason = f"online only — no {matcher.name} location named"
-    elif not normalize(raw):
-        reason = "no location given"
-    else:
-        reason = f"no {matcher.name} location named"
+        return LocationVerdict(raw, event_format, places, "in-area", matcher.name,
+                               f"names {named} in {matcher.name}")
 
-    return LocationVerdict(
-        raw=raw,
-        event_format=event_format,
-        places=places,
-        in_area=bool(places),
-        area=matcher.name,
-        reason=reason,
-    )
+    if matcher.has_gazetteer and names_a_known_outside_place(text):
+        return LocationVerdict(raw, event_format, (), "elsewhere", matcher.name,
+                               f"names somewhere outside {matcher.name}")
+
+    if event_format == "online":
+        return LocationVerdict(raw, event_format, (), "online-only", matcher.name,
+                               "online only — no venue given")
+
+    if not text:
+        return LocationVerdict(raw, event_format, (), "unclear", matcher.name,
+                               "no location given — needs the listing read")
+
+    return LocationVerdict(raw, event_format, (), "unclear", matcher.name,
+                           f"{raw.strip()!r} is not a place name — needs the listing read")
 
 
 if __name__ == "__main__":

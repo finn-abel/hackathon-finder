@@ -147,3 +147,51 @@ def test_general_mode_does_not_apply_the_foreign_guard():
     # The GTA is Canadian; a user-supplied area can be anywhere.
     austin = target_matcher("Austin, TX")
     assert classify("Austin, Texas (in-person)", austin).in_area
+
+
+# --- the three-way verdict ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,status",
+    [
+        ("Toronto, ON", "in-area"),
+        ("Bramalea City Centre", "in-area"),   # an alias, still confident
+        ("Waterloo, ON", "elsewhere"),
+        ("Hamilton", "elsewhere"),
+        ("Milton Keynes, UK", "elsewhere"),
+        ("Online", "online-only"),
+        ("Fully remote", "online-only"),
+        ("Sheridan College Hazel McCallion Campus", "unclear"),
+        ("Bur Oak Secondary School", "unclear"),
+        ("Ontario Tech University", "unclear"),
+        ("Stackt Marketplace", "unclear"),
+        ("", "unclear"),
+    ],
+)
+def test_a_venue_is_unclear_not_a_rejection(raw, status):
+    assert classify(raw).status == status
+
+
+def test_unclear_listings_are_the_ones_worth_reading():
+    # These are real Devpost tiles for GTA hackathons whose city never appears.
+    assert classify("Sheridan College Hazel McCallion Campus").needs_a_reader
+    assert classify("UTM").needs_a_reader
+    # A confident verdict either way does not need the AI.
+    assert not classify("Toronto, ON").needs_a_reader
+    assert not classify("Waterloo, ON").needs_a_reader
+    assert not classify("Online").needs_a_reader
+
+
+def test_general_mode_never_claims_elsewhere():
+    # Only the GTA matcher has a gazetteer. A user-supplied area does not know
+    # what is next door, so an unrecognised place must stay "unclear".
+    matcher = target_matcher("Waterloo, ON")
+    assert classify("Toronto, ON", matcher).status == "unclear"
+    assert classify("Waterloo, ON", matcher).status == "in-area"
+
+
+def test_in_area_still_means_what_it_did():
+    assert classify("Toronto, ON").in_area
+    for raw in ("Waterloo, ON", "Online", "Sheridan College"):
+        assert not classify(raw).in_area

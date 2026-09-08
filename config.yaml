@@ -17,3 +17,8 @@ filters:
   timeframe_months: 3   # only events starting within the next N months
   format: any           # in-person | online | hybrid | any
   themes: []            # e.g. ["ai", "web"] — empty means no theme filter
+
+# How wide to cast the net when gathering candidates.
+collect:
+  search_terms: []   # empty = derived from mode (GTA municipalities, or your location)
+  max_scrolls: 3     # Devpost infinite-scrolls; how many times to scroll for more

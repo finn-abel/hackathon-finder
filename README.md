@@ -59,3 +59,27 @@ uv run python -m core.dates                             # parse sample deadlines
 `classify()` returns an event format, the in-area places it found, and a
 plain-English `reason` for the dashboard. `parse_deadline()` returns a date
 and a status of `passed` / `soon` / `upcoming` / `unknown` — never a guess.
+
+## Collecting candidates
+
+`agent/devpost.py` drives the Steel browser to Devpost's listing pages and
+reads the tiles straight off the DOM — no LLM, because a listing page is a
+structured list and titles and hrefs must come back byte-exact.
+
+```bash
+uv run collect.py                                   # gta mode, from config.yaml
+uv run collect.py --mode general --location "Waterloo, ON"
+uv run collect.py --terms Toronto --max-scrolls 0   # a quick single-term run
+uv run collect.py --all                             # show what was ruled out
+```
+
+Two things about Devpost worth knowing, both found by looking rather than
+guessing:
+
+- **The listing is an infinite scroll.** `?page=2` is silently ignored and
+  re-serves page 1, so the collector scrolls until the tile count stops
+  growing.
+- **The tile often shows a venue, not a city** — "Sheridan College Hazel
+  McCallion Campus", "Bur Oak Secondary School". Those are not rejections.
+  `classify()` returns `unclear` for them, and they become the queue of
+  listings the model actually needs to open.
