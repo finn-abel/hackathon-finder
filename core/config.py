@@ -13,13 +13,13 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from core.gta import GTA_AREA_NAME
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
-GTA_AREA_NAME = "Greater Toronto Area"
-
 Mode = Literal["gta", "general"]
-EventFormat = Literal["in-person", "online", "hybrid", "any"]
+FormatFilter = Literal["in-person", "online", "hybrid", "any"]
 
 
 class Filters(BaseModel):
@@ -28,7 +28,7 @@ class Filters(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     timeframe_months: int = Field(default=3, ge=1, le=24)
-    format: EventFormat = "any"
+    format: FormatFilter = "any"
     themes: tuple[str, ...] = ()
 
 
