@@ -17,14 +17,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import date
+from pathlib import Path
 
 from agent.judge import judge_all, rank
 from core.config import build_parser, config_from_args
 from core.location import matcher_for
 from core.models import Judgement, criteria_fingerprint
+from core.results import build_results
 from core.screening import Bucket, Screened, screen_all
 from core.store import (
-    load_all_judgements, load_candidates, load_judgements, load_readings, save_judgements,
+    load_all_judgements, load_candidates, load_judgements, load_readings,
+    save_judgements, save_results,
 )
 
 BUCKETS: tuple[Bucket, ...] = ("primary", "online-gta", "unresolved", "excluded")
@@ -42,6 +45,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--refresh", action="store_true", help="re-judge even if cached")
     parser.add_argument("--model", help="override the judging model")
     parser.add_argument("--top", type=int, help="only print the top N")
+    parser.add_argument("--out", default="results.json", help="where to write the results file")
+    parser.add_argument("--no-save", action="store_true", help="print only, write nothing")
+    parser.add_argument("--include-excluded", action="store_true",
+                        help="also write rows code ruled out (they are summarised otherwise)")
     return parser.parse_args()
 
 
@@ -104,13 +111,27 @@ async def main() -> None:
         cached.update({j.key: j for j in fresh})
 
     ranked = rank(wanted, cached)
-    if args.top:
-        ranked = ranked[: args.top]
 
+    if not args.no_save:
+        judged_keys = {item.candidate.key for item, _ in ranked}
+        kept = [
+            s for s in screened
+            if s.bucket != "excluded" or args.include_excluded
+        ]
+        unranked = [s for s in kept if s.candidate.key not in judged_keys]
+        results = build_results(
+            ranked, unranked, screened, config, matcher.name,
+            fingerprint, readings, today,
+        )
+        written = save_results(results, Path(args.out))
+        print(f"Wrote {len(results.results)} rows to {written.name} "
+              f"(schema {results.schema_version})")
+
+    shown = ranked[: args.top] if args.top else ranked
     print(f"\n{'=' * 78}")
     print(f"Ranked by fit against your criteria ({len(ranked)})")
     print("=" * 78)
-    for index, (item, judgement) in enumerate(ranked, start=1):
+    for index, (item, judgement) in enumerate(shown, start=1):
         print_ranked(index, item, judgement)
 
 

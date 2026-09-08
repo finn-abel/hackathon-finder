@@ -184,3 +184,42 @@ those clauses stay in the prompt.
 Judgements are cached against a fingerprint of the criteria sentence, so
 re-running is free but **editing `criteria` re-judges everything** — and work
 done under other criteria is kept, not overwritten.
+
+## results.json
+
+`judge.py` writes `results.json` — the artifact the dashboard reads. The shape
+mirrors how each value was produced:
+
+```json
+{
+  "schema_version": "1.0",
+  "legend": { "provenance": {...}, "bucket": {...}, "deadline_status": {...} },
+  "run":    { "mode": "gta", "target_area": "...", "criteria": "...",
+              "criteria_hash": "...", "today": "...", "sources": [...],
+              "filters": {...}, "counts": {...}, "excluded_reasons": {...} },
+  "results": [
+    { "rank": 1, "title": "...", "url": "...",
+      "raw":     { "location": "UofT Mississauga - Deerfield Hall", "was_read": false },
+      "derived": { "in_area": true, "places": ["Mississauga"], "regions": ["Peel"],
+                   "starts_on": "2026-02-27", "deadline_status": "passed",
+                   "bucket": "primary", "reasons": [...], "flags": [...] },
+      "fit":     { "score": 5, "reason": "...", "supports": [...], "missing": [...] } }
+  ]
+}
+```
+
+- **`raw`** is verbatim from the listing. Nothing altered it.
+- **`derived`** is what code computed — every value carries its `reasons`, and
+  assumptions appear in `flags`.
+- **`fit`** is the model's judgement, absent (not zero) when nothing judged it.
+
+The `legend` documents every vocabulary the file uses, and a test asserts no
+value can appear that the file does not explain. Rows code ruled out are
+summarised in `run.excluded_reasons` rather than listed; `--include-excluded`
+writes them in full.
+
+```bash
+uv run judge.py --include-past          # writes results.json
+uv run judge.py --no-save               # print only
+uv run judge.py --out /tmp/scan.json
+```

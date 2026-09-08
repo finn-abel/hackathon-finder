@@ -102,3 +102,19 @@ def load_judgements(
     return {
         j.key: j for j in load_all_judgements(path) if j.criteria_hash == criteria_hash
     }
+
+
+RESULTS_PATH = PROJECT_ROOT / "results.json"
+
+
+def save_results(results, path: Path = RESULTS_PATH) -> Path:
+    """Write results.json. `results` is a core.results.Results."""
+    return _write_json(path, results.model_dump(mode="json"))
+
+
+def load_results(path: Path = RESULTS_PATH):
+    from core.results import Results
+
+    if not path.exists():
+        raise FileNotFoundError(f"No results at {path} — run `uv run judge.py` first")
+    return Results.model_validate_json(path.read_text(encoding="utf-8"))
