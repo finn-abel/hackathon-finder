@@ -20,5 +20,12 @@ filters:
 
 # How wide to cast the net when gathering candidates.
 collect:
+  sources: [devpost, mlh]   # which sources to gather from
   search_terms: []   # empty = derived from mode (GTA municipalities, or your location)
   max_scrolls: 3     # Devpost infinite-scrolls; how many times to scroll for more
+
+# How the AI reads a detail page (extraction only — it never judges).
+read:
+  model: gpt-4.1-mini
+  max_steps: 15
+  timeout_s: 240      # give up on one listing after this long and move on

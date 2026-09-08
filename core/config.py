@@ -37,8 +37,19 @@ class Collect(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    sources: tuple[str, ...] = ("devpost", "mlh")
     search_terms: tuple[str, ...] = ()  # empty means "derive from the mode"
     max_scrolls: int = Field(default=3, ge=0, le=20)
+
+
+class Read(BaseModel):
+    """How the AI reads a detail page."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str = "gpt-4.1-mini"
+    max_steps: int = Field(default=15, ge=1, le=50)
+    timeout_s: float = Field(default=240.0, ge=30.0, le=900.0)
 
 
 class Config(BaseModel):
@@ -51,6 +62,7 @@ class Config(BaseModel):
     criteria: str = Field(min_length=1)
     filters: Filters = Filters()
     collect: Collect = Collect()
+    read: Read = Read()
 
     @model_validator(mode="after")
     def _general_mode_needs_a_location(self) -> "Config":

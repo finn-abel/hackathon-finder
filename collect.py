@@ -14,11 +14,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from agent.devpost import collect, search_terms_for
 from agent.session import steel_browser
+from agent.sources import CollectRequest, registry, source_names
+from agent.sources.devpost import search_terms_for
 from core.config import Config, build_parser, config_from_args
 from core.location import classify, matcher_for
+from core.merge import merge
 from core.models import Candidate
+from core.store import save_candidates
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,7 +29,9 @@ def parse_args() -> argparse.Namespace:
         parents=[build_parser(add_help=False)], description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--terms", nargs="+", help="override the Devpost search terms")
+    parser.add_argument("--sources", nargs="+", choices=source_names(),
+                        help="which sources to collect from")
+    parser.add_argument("--terms", nargs="+", help="override the search terms")
     parser.add_argument("--max-scrolls", type=int, help="how far to scroll each listing")
     parser.add_argument("--all", action="store_true", help="also list what was screened out")
     return parser.parse_args()
@@ -44,8 +49,9 @@ def print_candidate(index: int, candidate: Candidate, reason: str) -> None:
     print(f"\n{index:>2}. {candidate.title}")
     print(f"    {candidate.url}")
     location = candidate.location_raw or "(no location given)"
-    print(f"    {location}  —  {reason}")
-    details = " | ".join(filter(None, (candidate.status_raw, candidate.deadline_raw)))
+    origin = f"[{candidate.source}{'+' + '+'.join(candidate.also_in) if candidate.also_in else ''}]"
+    print(f"    {origin} {location}  —  {reason}")
+    details = " | ".join(filter(None, (candidate.status_raw, candidate.dates_raw)))
     if details:
         print(f"    {details}")
     if candidate.themes:
@@ -58,17 +64,32 @@ async def main() -> None:
     matcher = matcher_for(config.mode, config.location)
     terms = terms_for(config, args.terms)
     max_scrolls = config.collect.max_scrolls if args.max_scrolls is None else args.max_scrolls
+    chosen = tuple(args.sources or config.collect.sources)
+    sources = registry()
 
-    print(f"Mode      {config.mode}  →  {matcher.name}")
-    print(f"Searching {', '.join(terms)}  (scrolling up to {max_scrolls}x each)\n")
+    request = CollectRequest(
+        mode=config.mode, location=config.location, terms=terms, max_scrolls=max_scrolls
+    )
 
+    print(f"Mode     {config.mode}  →  {matcher.name}")
+    print(f"Sources  {', '.join(chosen)}")
+    print(f"Terms    {', '.join(terms)}  (Devpost only)\n")
+
+    collected: list[Candidate] = []
     async with steel_browser() as (browser, viewer_url):
         print(f"Watch it:  {viewer_url}\n")
+        for name in chosen:
+            try:
+                found = await sources[name](browser, request)
+            except Exception as exc:
+                # One broken source must not lose the others' results.
+                print(f"  {name:<9} FAILED — {type(exc).__name__}: {exc}")
+                continue
+            in_area = sum(1 for c in found if classify(c.location_raw, matcher).in_area)
+            print(f"  {name:<9} {len(found):>3} found, {in_area} already placed in {matcher.name}")
+            collected.extend(found)
 
-        def progress(term: str, count: int) -> None:
-            print(f"  {term:<14} {count} tiles")
-
-        candidates = await collect(browser, terms, max_scrolls, on_term=progress)
+    candidates = merge(collected)
 
     verdicts = {c.key: classify(c.location_raw, matcher) for c in candidates}
 
@@ -79,7 +100,7 @@ async def main() -> None:
     dropped = bucket("elsewhere", "online-only")
 
     print(f"\n{'=' * 72}")
-    print(f"{len(candidates)} unique candidates for {matcher.name}")
+    print(f"{len(collected)} collected → {len(candidates)} unique candidates for {matcher.name}")
     print(f"  {len(confirmed):>3} confirmed by the listing location")
     print(f"  {len(unclear):>3} unresolved — the tile shows a venue, not a city")
     print(f"  {len(dropped):>3} ruled out (elsewhere or online-only)")
@@ -93,6 +114,10 @@ async def main() -> None:
     print("    Code cannot place these. Step 5 opens them and lets the model read.")
     for index, candidate in enumerate(unclear, start=1):
         print_candidate(index, candidate, verdicts[candidate.key].reason)
+
+    saved = save_candidates(candidates)
+    print(f"\n\nCached {len(candidates)} candidates to {saved.name} — "
+          f"`uv run read.py` works from this file, no browser needed.")
 
     if args.all and dropped:
         print(f"\n\n### Ruled out ({len(dropped)})")

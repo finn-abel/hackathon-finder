@@ -6,7 +6,7 @@ output stands in for the page.
 
 import pytest
 
-from agent.devpost import (
+from agent.sources.devpost import (
     DEFAULT_GTA_SEARCH_TERMS,
     dedupe,
     listing_url,
@@ -57,7 +57,7 @@ def test_a_tile_becomes_a_candidate_with_every_field_kept():
     candidate = parse_tiles([RAW_TILE], found_via="Toronto")[0]
     assert candidate.title == "LarpHacks"
     assert candidate.location_raw == "Toronto"
-    assert candidate.deadline_raw == "Oct 24 - 25, 2026"
+    assert candidate.dates_raw == "Oct 24 - 25, 2026"
     assert candidate.status_raw == "Upcoming"
     assert candidate.themes == ("Beginner Friendly", "Machine Learning/AI", "Web")
     assert candidate.found_via == "Toronto"

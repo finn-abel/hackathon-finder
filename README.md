@@ -83,3 +83,56 @@ guessing:
   McCallion Campus", "Bur Oak Secondary School". Those are not rejections.
   `classify()` returns `unclear` for them, and they become the queue of
   listings the model actually needs to open.
+
+## Reading a listing
+
+`agent/reader.py` is the first place a model belongs. Detail pages are prose
+— eligibility buried under a Rules tab, a deadline phrased as "by 12:00 PM
+EST on Sunday" — and no regex reads that reliably.
+
+```bash
+uv run read.py --list                          # cached candidates
+uv run read.py --index 3                       # read one of them
+uv run read.py https://some.devpost.com/       # read any URL
+```
+
+The model extracts and nothing more. It does not decide whether a location
+is in the GTA or whether a deadline has passed — the prompt forbids it, and
+`core.location` and `core.dates` take its raw strings from there. Every field
+is nullable so "the page does not say" is always available; a model with no
+way to say that will invent something.
+
+This is where the venue problem from collection gets solved. A tile reading
+"Sheridan College Hazel McCallion Campus" is unplaceable by code; the page
+itself says "Sheridan HMC Campus (Mississauga, ON)", which classifies cleanly.
+
+## Sources
+
+Candidates come from a pluggable registry in `agent/sources/`. A source is a
+module with a `NAME` and a `collect(browser, request)` coroutine; everything
+downstream — classification, dates, judging — is source-agnostic.
+
+```yaml
+collect:
+  sources: [devpost, mlh]
+```
+
+```bash
+uv run collect.py --sources mlh       # one source
+uv run collect.py --sources devpost mlh
+```
+
+The two sources behave very differently, and it matters:
+
+| | Devpost | MLH |
+|---|---|---|
+| Shape | client-rendered tiles, infinite scroll | one page, embedded JSON |
+| Location | often a venue name | `City, Province` + structured venue address |
+| Dates | a display string | ISO 8601 `startsAt`/`endsAt` |
+| Format | not stated | explicit `formatType` |
+| Needs an AI read | ~55% of results | ~2% |
+
+Because MLH publishes structured data, code settles almost all of it with no
+model call at all. `core/merge.py` folds events found in both sources into one
+record, preferring the one carrying more structured fields — which upgrades a
+Devpost venue string to MLH's clean city when both list the same event.

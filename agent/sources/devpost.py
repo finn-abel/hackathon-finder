@@ -16,7 +16,10 @@ from urllib.parse import urlencode
 from browser_use import Browser
 
 from agent.session import evaluate, evaluate_json
+from agent.sources import CollectRequest
 from core.models import Candidate
+
+NAME = "devpost"
 
 LISTING_URL = "https://devpost.com/hackathons"
 
@@ -92,7 +95,7 @@ def parse_tiles(tiles: Iterable[dict[str, Any]], found_via: str = "") -> tuple[C
                 title=title,
                 url=url,
                 location_raw=(tile.get("location") or "").strip(),
-                deadline_raw=(tile.get("dates") or "").strip(),
+                dates_raw=(tile.get("dates") or "").strip(),
                 status_raw=(tile.get("status") or "").strip(),
                 host=(tile.get("host") or "").strip(),
                 themes=tuple(t.strip() for t in tile.get("themes") or () if t.strip()),
@@ -160,17 +163,10 @@ async def collect_term(browser: Browser, term: str, max_scrolls: int = 3) -> tup
     return parse_tiles(tiles, found_via=term)
 
 
-async def collect(
-    browser: Browser,
-    terms: Sequence[str],
-    max_scrolls: int = 3,
-    on_term: Any = None,
-) -> tuple[Candidate, ...]:
-    """Collect every search term's results and return them deduped."""
+async def collect(browser: Browser, request: CollectRequest) -> tuple[Candidate, ...]:
+    """Search each term in turn and return the deduped results."""
+    terms = request.terms or search_terms_for(request.mode, request.location)
     found: list[Candidate] = []
     for term in terms:
-        candidates = await collect_term(browser, term, max_scrolls)
-        if on_term:
-            on_term(term, len(candidates))
-        found.extend(candidates)
+        found.extend(await collect_term(browser, term, request.max_scrolls))
     return dedupe(found)
